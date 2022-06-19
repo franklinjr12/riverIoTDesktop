@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 def f():
-    connect_str = "DefaultEndpointsProtocol=https;AccountName=riveriotstorage;AccountKey=sMvbELVCFZ3+/T/V8Ta45wSGPtMkx6Sh/2K89uRFfUN6z1mhwRteGzz6wx2HkpWtqQlLbZ45nwF0sh92IQHbhA==;EndpointSuffix=core.windows.net"
+    connect_str = ""
     blob_service_client = BlobServiceClient.from_connection_string(connect_str)
     # # List all containers
     # all_containers = blob_service_client.list_containers(include_metadata=True)
@@ -17,7 +17,7 @@ def f():
     datas = []
     download_file_path = "DOWNLOAD.txt"
     if (os.path.exists(download_file_path) == False):
-        container_name = "riveriotcontainer"
+        container_name = ""
         blob_name_path = "riverIoT/00/2021/09/30/00/.avro"
         container_client = blob_service_client.get_container_client(
             container_name)
