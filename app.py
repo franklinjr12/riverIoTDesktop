@@ -10,14 +10,15 @@ try:
 except ImportError:
     from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk as NavigationToolbar2TkAgg
 import matplotlib
+from azure_blob_downloader import *
+import threading
+import time
 matplotlib.use("TkAgg")
 
 
 LARGE_FONT = ("Verdana", 12)
 style.use("ggplot")
 
-matplotlib.rc("xtick", labelsize=4)
-matplotlib.rc("ytick", labelsize=6)
 
 f = Figure(figsize=(5, 5), dpi=100)
 f.tight_layout()
@@ -47,45 +48,48 @@ temperatureGraph.set_title("Local temperature")
 temperatureGraph.set_xlabel("time")
 temperatureGraph.set_ylabel("ºC")
 
+all_data = None
+
+should_animate = False
+
 
 def animateGraph(graph):
-    title = graph.get_title()
-    pullData = None
-    if(title == "River level"):
-        pullData = open("level.txt", "r").read()
-    elif(title == "Device battery"):
-        pullData = open("battery.txt", "r").read()
-    elif(title == "Local pressure"):
-        pullData = open("pressure.txt", "r").read()
-    elif(title == "Local temperature"):
-        pullData = open("temperature.txt", "r").read()
-    else:
-        pullData = open("samples.txt", "r").read()
-    # pullData = open("samples.txt", "r").read()
-    dataList = pullData.split('\n')
-    xList = []
-    yList = []
-    for eachLine in dataList:
-        if len(eachLine) > 1:
-            x, y = eachLine.split(',')
-            xList.append(float(x))
-            yList.append(float(y))
-    graph.clear()
-    graph.plot(xList, yList)
-    xlabel = graph.get_xlabel()
-    ylabel = graph.get_ylabel()
-    graph.set_ylim([0, float(max(yList))*1.2])
-    # graph.set_ylim([0, 10])
-    graph.set_title(title)
-    graph.set_xlabel(xlabel)
-    graph.set_ylabel(ylabel)
+    if(all_data != None):
+        title = graph.get_title()
+        pullData = []
+        if(title == "River level"):
+            pullData = [float(data["deviceData"]["d"]) for data in all_data]
+        elif(title == "Device battery"):
+            for data in all_data:
+                try:
+                    pullData.append(float(data["deviceData"]["v"]))
+                except:
+                    pullData.append(float(0))
+        elif(title == "Local pressure"):
+            pullData = [float(data["deviceData"]["p"]) for data in all_data]
+        elif(title == "Local temperature"):
+            pullData = [float(data["deviceData"]["t"]) for data in all_data]
+        else:
+            return
+        xList = [float(data["deviceData"]["time"]) for data in all_data]
+        yList = pullData
+        graph.clear()
+        graph.plot(xList, yList)
+        xlabel = graph.get_xlabel()
+        ylabel = graph.get_ylabel()
+        graph.set_ylim([0, float(max(yList))*1.2])
+        graph.set_title(title)
+        graph.set_xlabel(xlabel)
+        graph.set_ylabel(ylabel)
 
 
 def animate(i):
-    animateGraph(level)
-    animateGraph(batteryGraph)
-    animateGraph(pressureGraph)
-    animateGraph(temperatureGraph)
+    global should_animate
+    if(should_animate == True):
+        animateGraph(level)
+        animateGraph(batteryGraph)
+        animateGraph(pressureGraph)
+        animateGraph(temperatureGraph)
     # pass
 
 
@@ -105,7 +109,7 @@ class App(tk.Tk):
 
         self.frames = {}
 
-        for F in (StartPage, PageOne, PageTwo, PageThree, PageData):
+        for F in (StartPage, PageOne, PageTwo, PageThree, PageData, PageRealTime):
 
             frame = F(container, self)
 
@@ -114,6 +118,7 @@ class App(tk.Tk):
             frame.grid(row=0, column=0, sticky="nsew")
 
         self.show_frame(StartPage)
+        # self.show_frame(PageRealTime)
 
     def show_frame(self, cont):
 
@@ -142,6 +147,10 @@ class StartPage(tk.Frame):
         button3 = ttk.Button(self, text=PAGE_VISUALIZATION,
                              command=lambda: controller.show_frame(PageThree))
         button3.pack()
+
+        button4 = ttk.Button(self, text="Real time",
+                             command=lambda: controller.show_frame(PageRealTime))
+        button4.pack()
 
 
 class PageOne(tk.Frame):
@@ -213,7 +222,7 @@ class PageThree(tk.Frame):
         tk.Frame.grid(self, column=0, row=0, columnspan=4, rowspan=3)
         label = tk.Label(self, text="Device data", font=LARGE_FONT)
         label.pack(pady=10, padx=10)
-
+        self.controller = controller
         button1 = ttk.Button(self, text="Back to devices",
                              command=lambda: controller.show_frame(StartPage))
         button1.pack()
@@ -253,8 +262,17 @@ class PageThree(tk.Frame):
         samplingList.pack()
 
         button3 = ttk.Button(self, text="Show data",
-                             command=lambda: controller.show_frame(PageData))
+                             command=self.load_data)
         button3.pack()
+
+    def load_data(self):
+        global should_animate
+        should_animate = True
+        global all_data
+        all_data = get_data_from_date("2022/06/19")
+        animate(0)
+        should_animate = False
+        self.controller.show_frame(PageData)
 
 
 class PageData(tk.Frame):
@@ -280,11 +298,93 @@ class PageData(tk.Frame):
         toolbar.update()
         canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+        # animateGraph(level)
+        # animateGraph(temperatureGraph)
+        # animateGraph(pressureGraph)
+        # animateGraph(batteryGraph)
 
+
+class PageRealTime(tk.Frame):
+
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        label = tk.Label(self, text="Real time", font=LARGE_FONT)
+        label.pack(pady=10, padx=10)
+        self.read_thread = None
+        self.stop_thread = False
+        self.controller = controller
+        button1 = ttk.Button(self, text="Back to options",
+                             command=self.back_home)
+        button1.pack()
+        # samplingText = Text(self, width=15, height=1)
+        # samplingText.insert("1.0", "Type port like COM5")
+        # samplingText["state"] = "normal"
+        # samplingText.pack()
+        self.comPort = StringVar()
+        port = ttk.Entry(self, textvariable=self.comPort)
+        port.pack()
+        button2 = ttk.Button(self, text="Connect",
+                             command=self.connect)
+        button2.pack()
+
+        canvas = FigureCanvasTkAgg(f, self)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2TkAgg(canvas, self)
+        toolbar.update()
+        canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    def connect(self):
+        if(self.comPort != None):
+            try:
+                print("connecting to port "+self.comPort.get())
+                self.read_thread = threading.Thread(
+                    target=self.read_data)
+                self.read_thread.start()
+                self.ser = serial.Serial(
+                    port=self.comPort.get(), baudrate=115200)
+            except:
+                print("couldnt open port "+self.comPort.get())
+
+    def read_data(self):
+        global all_data
+        global should_animate
+        self.time = 1655673099
+        if(all_data != None):
+            all_data.clear()
+        else:
+            all_data = []
+            j = json.loads(
+                "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
+            all_data.append(j)
+        while(True):
+            if(self.stop_thread == True):
+                break
+            # j = json.loads(
+            #     "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
+            # all_data.append(j)
+            # self.time += 1
+            try:
+                line = self.ser.readline().decode("utf-8")
+                j = json.loads(
+                    "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
+                all_data.append(j)
+            except:
+                print("exception on reading")
+            should_animate = True
+            time.sleep(0.1)
+
+    def back_home(self):
+        self.stop_thread = True
+        self.controller.show_frame(PageOne)
+
+
+# all_data = get_data_from_date("2022/06/19")
 app = App()
-animateGraph(level)
-animateGraph(temperatureGraph)
-animateGraph(pressureGraph)
-animateGraph(batteryGraph)
-# ani = animation.FuncAnimation(f, animate, interval=1000)
+# animateGraph(level)
+# animateGraph(temperatureGraph)
+# animateGraph(pressureGraph)
+# animateGraph(batteryGraph)
+ani = animation.FuncAnimation(f, animate, interval=1000)
 app.mainloop()
