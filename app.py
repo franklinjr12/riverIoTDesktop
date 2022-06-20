@@ -13,6 +13,7 @@ import matplotlib
 from azure_blob_downloader import *
 import threading
 import time
+import serial
 matplotlib.use("TkAgg")
 
 
@@ -22,7 +23,7 @@ style.use("ggplot")
 
 f = Figure(figsize=(5, 5), dpi=100)
 f.tight_layout()
-f.subplots_adjust(wspace=0.2, hspace=0.6)
+f.subplots_adjust(wspace=0.2, hspace=0.3)
 
 level = f.add_subplot(212)
 # level.set_ylim([0, 6])
@@ -77,7 +78,10 @@ def animateGraph(graph):
         graph.plot(xList, yList)
         xlabel = graph.get_xlabel()
         ylabel = graph.get_ylabel()
-        graph.set_ylim([0, float(max(yList))*1.2])
+        if(float(min(yList))*1.2 < 0):
+            graph.set_ylim([float(min(yList))*1.2, float(max(yList))*1.2])
+        else:
+            graph.set_ylim([0, float(max(yList))*1.2])
         graph.set_title(title)
         graph.set_xlabel(xlabel)
         graph.set_ylabel(ylabel)
@@ -313,6 +317,8 @@ class PageRealTime(tk.Frame):
         self.read_thread = None
         self.stop_thread = False
         self.controller = controller
+        self.should_ping = False
+        self.zero_offset = 0
         button1 = ttk.Button(self, text="Back to options",
                              command=self.back_home)
         button1.pack()
@@ -326,7 +332,12 @@ class PageRealTime(tk.Frame):
         button2 = ttk.Button(self, text="Connect",
                              command=self.connect)
         button2.pack()
-
+        button3 = ttk.Button(self, text="Download",
+                             command=self.download)
+        button3.pack()
+        button4 = ttk.Button(self, text="Zero",
+                             command=self.zero)
+        button4.pack()
         canvas = FigureCanvasTkAgg(f, self)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
@@ -339,25 +350,31 @@ class PageRealTime(tk.Frame):
         if(self.comPort != None):
             try:
                 print("connecting to port "+self.comPort.get())
+                self.ser = serial.Serial(
+                    port=self.comPort.get(), baudrate=115200)
                 self.read_thread = threading.Thread(
                     target=self.read_data)
                 self.read_thread.start()
-                self.ser = serial.Serial(
-                    port=self.comPort.get(), baudrate=115200)
-            except:
+            except Exception as ex:
+                self.ser.close()
                 print("couldnt open port "+self.comPort.get())
+                print(ex)
 
     def read_data(self):
         global all_data
         global should_animate
         self.time = 1655673099
+        self.last_level = 0
         if(all_data != None):
             all_data.clear()
         else:
             all_data = []
-            j = json.loads(
-                "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
-            all_data.append(j)
+            # j = json.loads(
+            #     "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
+            # all_data.append(j)
+        self.should_ping = True
+        self.ping_thread = threading.Thread(target=self.ping_board)
+        self.ping_thread.start()
         while(True):
             if(self.stop_thread == True):
                 break
@@ -367,17 +384,45 @@ class PageRealTime(tk.Frame):
             # self.time += 1
             try:
                 line = self.ser.readline().decode("utf-8")
-                j = json.loads(
-                    "{\"deviceData\":{\"id\":\"riverdatalogger1\",\"d\":668.620667,\"v\":4.00,\"p\":916.94,\"t\":18.85,\"a\":861.45,\"time\":"+str(self.time)+"}}")
+                print("income: "+line)
+                while(line.startswith("{\"deviceData") == False):
+                    line = self.ser.readline().decode("utf-8")
+                    print("income: "+line)
+                self.should_ping = False
+                j = json.loads(line)
+                self.last_level = float(j["deviceData"]["d"])
+                j["deviceData"]["d"] = self.zero_offset - \
+                    float(j["deviceData"]["d"])
+                print(j["deviceData"]["d"])
                 all_data.append(j)
-            except:
+                should_animate = True
+            except Exception as ex:
+                self.ser.flushInput()
+                self.ser.flushOutput()
                 print("exception on reading")
-            should_animate = True
+                print(ex)
+            time.sleep(0.1)
+
+    def ping_board(self):
+        while(self.should_ping == True):
+            try:
+                self.ser.write(b"ping")
+            except:
+                pass
             time.sleep(0.1)
 
     def back_home(self):
         self.stop_thread = True
         self.controller.show_frame(PageOne)
+
+    def download(self):
+        pass
+
+    def zero(self):
+        self.zero_offset = self.last_level
+        global level
+        level.clear()
+        pass
 
 
 # all_data = get_data_from_date("2022/06/19")
